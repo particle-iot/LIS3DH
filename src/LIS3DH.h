@@ -15,6 +15,10 @@
 // Official project location:
 // https://github.com/rickkas7/LIS3DH
 
+
+#define ACCEL_DEBUG  0
+
+
 /**
  * @brief Structure to hold a single XYZ sample
  */
@@ -24,11 +28,83 @@ typedef struct {
 	int16_t		z; //!< acceleration in the Z axis (signed)
 } LIS3DHSample;
 
+/**
+ * Structure to hold a single XYZ sample
+ */
+typedef struct {
+	float  x;
+	float  y;
+	float  z;
+	float  mag;
+} LIS3DHRead;
 
 /**
- * @brief Configuration object
- *
- * You normally create one of these on the stack and then use
+ * Structure to save event
+ */
+typedef struct {
+	bool moving  = false;
+	bool crash	  = false;
+	bool updated  = false;
+	bool valid	  = false;
+
+	void init()
+	{
+		moving = crash = updated = valid = false;
+	}
+} LIS3DHEvent;
+
+typedef enum {
+	LIS3DH_RATE_POWERDOWN      = 0,
+	LIS3DH_RATE_1_HZ           = 0x10,
+	LIS3DH_RATE_10_HZ          = 0x20,
+	LIS3DH_RATE_25_HZ          = 0x30,
+	LIS3DH_RATE_50_HZ          = 0x40,
+	LIS3DH_RATE_100_HZ         = 0x50,
+	LIS3DH_RATE_200_HZ         = 0x60,
+	LIS3DH_RATE_400_HZ         = 0x70,
+	LIS3DH_RATE_LOWPOWER_1K6HZ = 0x80,
+	LIS3DH_RATE_LOWPOWER_5KHZ  = 0x90,
+} LIS3DHRate;
+
+typedef enum {
+	LIS3DH_RANGE_2_G  = 0x00,
+	LIS3DH_RANGE_4_G  = 0x10,
+	LIS3DH_RANGE_8_G  = 0x20,
+	LIS3DH_RANGE_16_G = 0x30,
+} LIS3DHRange;
+
+typedef enum {
+	LIS3DH_AXIS_X    = 0x00,
+	LIS3DH_AXIS_Y    = 0x01,
+	LIS3DH_AXIS_Z    = 0x02,
+	LIS3DH_AXIS_ALL  = 0x03,
+} LIS3DHAxis;
+
+typedef enum {
+	LIS3DH_DIV_2_G  = 16380,
+	LIS3DH_DIV_4_G  = 8190,
+	LIS3DH_DIV_8_G  = 4096,
+	LIS3DH_DIV_16_G = 1365,
+} LIS3DHDivider;
+
+typedef enum {
+	LIS3DH_THRES_MODE_CEILING = 0x00,
+	LIS3DH_THRES_MODE_FLOOR	  = 0x01,
+} LIS3DHThresMode;
+
+typedef enum {
+	LIS3DH_READ_MAX 	= 0x01,
+	LIS3DH_READ_MIN		= 0x02,
+	LIS3DH_READ_AVERAGE	= 0x03,
+} LIS3DHReadMode;
+
+typedef enum {
+	LIS3DH_ENABLE_INT1_PIN = 0x01,
+	LIS3DH_ENABLE_INT2_PIN = 0x02,
+} LIS3DHEnableIntPin;
+
+/**
+ * Configuration object. You normally create one of these on the stack and then use
  * one of the set* methods to set the mode you want to use. The object then gets
  * passed to the setup() method. The configuration object does not need to exist
  * after the setup method returns.
@@ -43,30 +119,21 @@ public:
 	/**
 	 * @brief Sets low power wake on move mode
 	 *
-	 * @param movementThreshold Lower values are more sensitive. A common value is 16.
+	 * @param wakeAxis setting the axis to trigger wakeup event, value are define in enum LIS3DHAxis
+	 * @param duration trigger event duration, unit is ms
+	 * @param sampleRate sample frequency in low power mode, value are define in enum LIS3DHRate
+	 * @param thresholdMode trigger condition, value are define in enum LIS3DHThresMode
+	 * @param threshold trigger threshold value. float value with unit g
+	 * @param int_pin interrupt pins output
 	 */
-	LIS3DHConfig &setLowPowerWakeMode(uint8_t movementThreshold);
+	LIS3DHConfig &setLowPowerWakeMode(LIS3DHAxis wakeAxis, uint16_t duration, LIS3DHRate sampleRate, LIS3DHThresMode thresholdMode, float threshold, LIS3DHEnableIntPin int_pin, bool active_low = false);
 
 	/**
 	 * @brief Sets continuous acceleration monitoring mode
 	 *
-	 * @param rate The sampling rate. Values are:
-	 *
-	 * 0  Power down mode
-	 * 1  1 Hz
-	 * 2  10 Hz
-	 * 3  25 Hz
-	 * 4  50 Hz
-	 * 5  100 Hz
-	 * 6  200 Hz
-	 * 7  400 Hz
-	 * 8  Low Power Mode (1.6 kHz)
-	 * 9  HR / normal (1.344 kHz) or low-power mode (5.376 kHz)
-	 *
-	 * You should only select values 1 - 7, the other registers are not really set up to handle the other
-	 * modes properly
+	 * @param rate The sampling rate. Values are setting in enum LIS3DHRate
 	 */
-	LIS3DHConfig &setAccelMode(uint8_t rate);
+	LIS3DHConfig &setSampleRate(LIS3DHRate sampleRate);
 
 	/**
 	 * @brief Sets orientation interrupt mode
@@ -75,7 +142,7 @@ public:
 	 *
 	 * @param movementThreshold Lower values are more sensitive. A common value is 16.
 	 */
-	LIS3DHConfig &setPositionInterrupt(uint8_t movementThreshold);
+	LIS3DHConfig &setPositionInterrupt(uint8_t movementThreshold, LIS3DHEnableIntPin int_pin, bool active_low = false);
 
 	uint8_t reg1 = 0;
 	uint8_t reg2 = 0;
@@ -87,7 +154,11 @@ public:
 	uint8_t int1_ths = 0;
 	uint8_t int1_duration = 0;
 	uint8_t int1_cfg = 0;
+	uint8_t int2_ths = 0;
+	uint8_t int2_duration = 0;
+	uint8_t int2_cfg = 0;
 	uint8_t fifoCtrlReg = 0;
+    uint8_t int_pin = LIS3DH_ENABLE_INT1_PIN;
 };
 
 /**
@@ -129,6 +200,20 @@ public:
 	 */
 	bool setup(LIS3DHConfig &config);
 
+	void  on(float movingTh, float crashTh);
+	void  on(void);
+	void  off(void);
+	void  measInit(void);
+	bool  setWakeMode(LIS3DHAxis wakeAxis, uint16_t duration, uint16_t sampleRate, LIS3DHThresMode thresholdMode, float threshold, LIS3DHEnableIntPin int_pin, bool int_active_low=false);
+	bool  setupSample(uint16_t duration, uint16_t sampleRate);
+	void  setupMode(LIS3DHReadMode mode);
+	float read(LIS3DHAxis axis);
+	bool  readSensor(LIS3DHRead &data);
+	float readMagnitude(void);
+	void  updateEvent(float magnitude);
+	uint8_t readEvent(void);
+	void  updateAccel(void);
+	bool  isUpdated() const     { return updated; }
 
 	/**
 	 * @brief Calibrate the gravity cancellation filter
@@ -141,6 +226,13 @@ public:
 	 * the device to stop moving. 0 means wait forever.
 	 */
 	bool calibrateFilter(unsigned long stationaryTime, unsigned long maxWaitTime = 0);
+
+    /**
+     * @brief read interrupt flag from the resister
+     *
+     * @param int_pin target interrupt pin and register
+     */
+    bool readInterrupt(LIS3DHEnableIntPin int_pin);
 
 	/**
 	 * @brief After getting an interrupt, call this to read the interrupt status and clear the interrupt
@@ -177,6 +269,8 @@ public:
 
 	/**
 	 * @brief When using position interrupt mode, returns the orientation of the device.
+     * 
+     * @param int_pin read the interrupt from this interrupt register
 	 *
 	 * 0 = not in a known position
 	 * 1 = position a
@@ -188,7 +282,7 @@ public:
 	 *
 	 * See page 28 of the Application Note AN3308 for more information.
 	 */
-	uint8_t readPositionInterrupt();
+	uint8_t readPositionInterrupt(LIS3DHEnableIntPin int_pin);
 
 	/**
 	 * @brief Reads an 8-bit register value
@@ -272,6 +366,10 @@ public:
 	static const uint8_t REG_INT1_SRC = 0x31;
 	static const uint8_t REG_INT1_THS = 0x32;
 	static const uint8_t REG_INT1_DURATION = 0x33;
+	static const uint8_t REG_INT2_CFG = 0x34;
+	static const uint8_t REG_INT2_SRC = 0x35;
+	static const uint8_t REG_INT2_THS = 0x36;
+	static const uint8_t REG_INT2_DURATION = 0x37;
 	static const uint8_t REG_CLICK_CFG = 0x38;
 	static const uint8_t REG_CLICK_SRC = 0x39;
 	static const uint8_t REG_CLICK_THS = 0x3a;
@@ -306,14 +404,6 @@ public:
 	static const uint8_t CTRL_REG1_YEN = 0x02;
 	static const uint8_t CTRL_REG1_XEN = 0x01;
 
-	static const uint8_t RATE_1_HZ   = 0x10;
-	static const uint8_t RATE_10_HZ  = 0x20;
-	static const uint8_t RATE_25_HZ  = 0x30;
-	static const uint8_t RATE_50_HZ  = 0x40;
-	static const uint8_t RATE_100_HZ = 0x50;
-	static const uint8_t RATE_200_HZ = 0x60;
-	static const uint8_t RATE_400_HZ = 0x70;
-
 	static const uint8_t CTRL_REG2_HPM1 = 0x80;
 	static const uint8_t CTRL_REG2_HPM0 = 0x40;
 	static const uint8_t CTRL_REG2_HPCF2 = 0x20;
@@ -344,28 +434,30 @@ public:
 	static const uint8_t CTRL_REG5_FIFO_EN = 0x40;
 	static const uint8_t CTRL_REG5_LIR_INT1 = 0x08;
 	static const uint8_t CTRL_REG5_D4D_INT1 = 0x04;
+	static const uint8_t CTRL_REG5_LIR_INT2 = 0x02;
+	static const uint8_t CTRL_REG5_D4D_INT2 = 0x01;
 
 	static const uint8_t CTRL_REG6_I2_CLICK = 0x80;
 	static const uint8_t CTRL_REG6_I2_INT2 = 0x40;
 	static const uint8_t CTRL_REG6_BOOT_I2 = 0x10;
-	static const uint8_t CTRL_REG6_H_LACTIVE = 0x02;
+	static const uint8_t CTRL_REG6_INT_POLARITY = 0x02;
 
-	static const uint8_t INT1_CFG_AOI = 0x80;
-	static const uint8_t INT1_CFG_6D = 0x40;
-	static const uint8_t INT1_CFG_ZHIE_ZUPE = 0x20;
-	static const uint8_t INT1_CFG_ZLIE_ZDOWNE = 0x10;
-	static const uint8_t INT1_CFG_YHIE_YUPE = 0x08;
-	static const uint8_t INT1_CFG_YLIE_YDOWNE = 0x04;
-	static const uint8_t INT1_CFG_XHIE_XUPE = 0x02;
-	static const uint8_t INT1_CFG_XLIE_XDOWNE = 0x01;
+	static const uint8_t INT_CFG_AOI = 0x80;
+	static const uint8_t INT_CFG_6D = 0x40;
+	static const uint8_t INT_CFG_ZHIE_ZUPE = 0x20;
+	static const uint8_t INT_CFG_ZLIE_ZDOWNE = 0x10;
+	static const uint8_t INT_CFG_YHIE_YUPE = 0x08;
+	static const uint8_t INT_CFG_YLIE_YDOWNE = 0x04;
+	static const uint8_t INT_CFG_XHIE_XUPE = 0x02;
+	static const uint8_t INT_CFG_XLIE_XDOWNE = 0x01;
 
-	static const uint8_t INT1_SRC_IA = 0x40;
-	static const uint8_t INT1_SRC_ZH = 0x20;
-	static const uint8_t INT1_SRC_ZL = 0x10;
-	static const uint8_t INT1_SRC_YH = 0x08;
-	static const uint8_t INT1_SRC_YL = 0x04;
-	static const uint8_t INT1_SRC_XH = 0x02;
-	static const uint8_t INT1_SRC_XL = 0x01;
+	static const uint8_t INT_SRC_IA = 0x40;
+	static const uint8_t INT_SRC_ZH = 0x20;
+	static const uint8_t INT_SRC_ZL = 0x10;
+	static const uint8_t INT_SRC_YH = 0x08;
+	static const uint8_t INT_SRC_YL = 0x04;
+	static const uint8_t INT_SRC_XH = 0x02;
+	static const uint8_t INT_SRC_XL = 0x01;
 
 	static const uint8_t TEMP_CFG_ADC_PD = 0x80;
 	static const uint8_t TEMP_CFG_TEMP_EN = 0x40;
@@ -384,7 +476,31 @@ public:
 
 private:
 	int intPin; // Pin connected to INT1 on the accelerometer (-1 = not connected)
-	uint8_t int1_cfg = 0; // What we set as INT1_CFG
+	int enable_int_pin; // output int pins
+	uint8_t int1_cfg; // What we set as INT1_CFG
+	uint8_t int2_cfg; // What we set as INT2_CFG
+
+	bool updated;
+	uint16_t filterSize;
+	uint16_t readDuration;
+	LIS3DHReadMode readMode;
+
+    float movingThreshold = 0.2;// 0.2g = 2m/s^2
+    float crashThreshold = 15;  // 15g, crash could reach 60g
+
+    LIS3DHConfig wakeConfig;
+    LIS3DHConfig config;
+    LIS3DHRead readMin = {0};	// minimum value without offset
+    LIS3DHRead readMax = {0};	// minimum value without offset
+    LIS3DHRead readAvg = {0};	// minimum value without offset
+    LIS3DHEvent event;
+
+    // internal use for every measure period
+    LIS3DHRead measMin = {0};	// minimum value without offset
+    LIS3DHRead measMax = {0}; 	// maximum value without offset
+    LIS3DHRead measAvg = {0}; 	// average value without offset
+    int count = 0;
+    bool sensorActive = false;
 };
 
 /**
@@ -398,8 +514,9 @@ public:
 	 * @param spi specifies the SPI port (SPI, SPI1, etc.)
 	 * @param ss specifies the CS pin
 	 * @param intPin the pin used for the interrupt or -1 if not used
+	 * @param speed SPI speed in MHz, default is 10MHz
 	 */
-	LIS3DHSPI(SPIClass &spi, int ss = A2, int intPin = -1);
+	LIS3DHSPI(SPIClass &spi, int ss = A2, int intPin = -1, int speed = 10);
 	virtual ~LIS3DHSPI();
 
 	virtual bool hasDevice();
@@ -413,14 +530,12 @@ public:
 
 
 private:
-	void spiSetup();
-
 	virtual void beginTransaction();
 	virtual void endTransaction();
 
 	SPIClass &spi; // Typically SPI or SPI1
 	int ss;		// SS or /CS chip select pin. Default: A2, -1 if using I2C
-	bool spiShared = false; // not used 
+	int speed;
 	__SPISettings spiSettings;
 
 };
